@@ -1,0 +1,69 @@
+version: '3.8'
+
+services:
+  db:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    container_name: moneybee-db
+    environment:
+      - ACCEPT_EULA=Y
+      - MSSQL_SA_PASSWORD=Sifre123456!
+    ports:
+      - "1433:1433"
+    networks:
+      - moneybee-network
+
+  customer-api:
+    build:
+      context: .
+      dockerfile: src/Services/MoneyBee.Customer/MoneyBee.Customer.API/Dockerfile
+    container_name: customer-service
+    ports:
+      - "5001:8080"
+    environment:
+      - ConnectionStrings__DefaultConnection=Server=db;Database=MoneyBee_CustomerDb;User Id=sa;Password=Sifre123456!;TrustServerCertificate=True;
+      - Authentication__ApiKey=MoneyBeeSecret123
+    depends_on:
+      - db
+    networks:
+      - moneybee-network
+
+  transfer-api:
+    build:
+      context: .
+      dockerfile: src/Services/MoneyBee.Transfer/MoneyBee.Transfer.API/Dockerfile
+    container_name: transfer-service
+    ports:
+      - "5002:8080"
+    environment:
+      - ConnectionStrings__DefaultConnection=Server=db;Database=MoneyBee_TransferDb;User Id=sa;Password=Sifre123456!;TrustServerCertificate=True;
+      - Authentication__ApiKey=MoneyBeeSecret123
+      - ExternalServices__CustomerUrl=http://customer-api:8080
+      - ExternalServices__FraudUrl=http://fraud-service:8080
+      - ExternalServices__ExchangeRateUrl=http://exchange-rate-service:8080
+    depends_on:
+      - db
+      - customer-api
+    networks:
+      - moneybee-network
+
+  fraud-service:
+    image: bpnpay/fraud-service
+    container_name: external-fraud
+    networks:
+      - moneybee-network
+
+  kyc-service:
+    image: bpnpay/kyc-service
+    container_name: external-kyc
+    networks:
+      - moneybee-network
+
+  exchange-rate-service:
+    image: bpnpay/exchange-rate-service
+    container_name: external-exchange
+    networks:
+      - moneybee-network
+
+networks:
+  moneybee-network:
+    driver: bridge
