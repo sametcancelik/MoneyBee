@@ -3,23 +3,30 @@ using MoneyBee.Customer.Application.Common;
 using MoneyBee.Customer.Application.Features.Customers.Commands;
 using MoneyBee.Shared.Enums;
 
-namespace MoneyBee.Customer.Application.Features.Customers;
+namespace MoneyBee.Customer.Application.Features.Customers.Validators;
 
 public class CreateCustomerValidator : AbstractValidator<CreateCustomerCommand>
 {
     public CreateCustomerValidator()
     {
-        RuleFor(x => x.FirstName).NotEmpty().MaximumLength(50);
-        RuleFor(x => x.LastName).NotEmpty().MaximumLength(50);
-        
+        RuleFor(x => x.FirstName)
+            .NotEmpty()
+            .MaximumLength(50);
+
+        RuleFor(x => x.LastName)
+            .NotEmpty()
+            .MaximumLength(50);
+
         RuleFor(x => x.NationalId)
             .NotEmpty()
             .Length(11)
-            .Must(TcValidator.IsValid).WithMessage("Geçersiz T.C. Kimlik Numarası.");
+            .Must(TcValidator.IsValid)
+            .WithMessage("Geçersiz T.C. Kimlik Numarası.");
 
         RuleFor(x => x.BirthDate)
             .NotEmpty()
-            .Must(BeAtLeast18).WithMessage("Müşteri 18 yaşından küçük olamaz.");
+            .Must(BeAtLeast18)
+            .WithMessage("Müşteri 18 yaşından küçük olamaz.");
 
         RuleFor(x => x.TaxNumber)
             .NotEmpty()

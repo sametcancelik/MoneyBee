@@ -1,25 +1,52 @@
-using MoneyBee.Customer.Application.DTOs;
-using MoneyBee.Transfer.Application.Interfaces;
 using System.Net.Http.Json;
+using MoneyBee.Shared.Exceptions;
+using MoneyBee.Shared.Models;
+using MoneyBee.Transfer.Application.DTOs;
+using MoneyBee.Transfer.Application.Interfaces;
 
 namespace MoneyBee.Transfer.Infrastructure.ExternalServices;
-public class CustomerService(HttpClient _httpClient) : ICustomerService
+
+public class CustomerService(HttpClient httpClient) : ICustomerService
 {
-    public async Task<CustomerDto?> GetCustomerAsync(Guid customerId)
+    public async Task<ServiceResponse<CustomerDto>> GetCustomerAsync(Guid customerId)
     {
         try
         {
-            var response = await _httpClient.GetAsync($"api/v1/customers/{customerId}");
+            var response = await httpClient.GetAsync($"api/Customer/{customerId}");
+
             if (response.IsSuccessStatusCode)
             {
-                return await response.Content.ReadFromJsonAsync<CustomerDto>();
+                var serviceResponse = await response.Content.ReadFromJsonAsync<ServiceResponse<CustomerDto>>();
+                if (serviceResponse is { IsSuccess: true })
+                {
+                    return ServiceResponse<CustomerDto>.Success(serviceResponse.Data, serviceResponse.Message, serviceResponse.StatusCode);
+                }
             }
 
-            return null;
+            throw new BusinessException($"Müşteri bilgisi alınamadı. İstek: {response.RequestMessage?.RequestUri}");
         }
-        catch (Exception)
+        catch (BusinessException)
         {
-            return null; 
+            throw;
         }
+        catch (Exception ex)
+        {
+            throw new BusinessException($"Müşteri servisine erişilemedi: {ex.Message}", 503);
+        }
+    }
+
+    public async Task<ServiceResponse> UpdateCustomerLimitAsync(Guid senderCustomerId, decimal amountInTry)
+    {
+        var response = await httpClient.PutAsJsonAsync($"api/Customer/{senderCustomerId}/limit", new
+        {
+            Amount = amountInTry
+        });
+
+        if (!response.IsSuccessStatusCode)
+        {
+            throw new BusinessException("Limit güncellenemedi.");
+        }
+
+        return ServiceResponse.Success("Limit başarıyla güncellendi.");
     }
 }

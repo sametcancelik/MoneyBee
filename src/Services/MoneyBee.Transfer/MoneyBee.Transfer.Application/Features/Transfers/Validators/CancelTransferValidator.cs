@@ -2,6 +2,7 @@ using FluentValidation;
 using MoneyBee.Transfer.Application.Features.Transfers.Commands;
 
 namespace MoneyBee.Transfer.Application.Features.Transfers.Validators;
+
 public class CancelTransferValidator : AbstractValidator<CancelTransferCommand>
 {
     public CancelTransferValidator()

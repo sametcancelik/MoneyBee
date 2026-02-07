@@ -1,49 +1,55 @@
 using MediatR;
-using Microsoft.EntityFrameworkCore;
 using MoneyBee.Shared.Enums;
+using MoneyBee.Shared.Exceptions;
+using MoneyBee.Shared.Models;
+using MoneyBee.Transfer.Application.DTOs;
 using MoneyBee.Transfer.Application.Features.Transfers.Commands;
 using MoneyBee.Transfer.Application.Interfaces;
 using MoneyBee.Transfer.Application.Interfaces.Persistance;
+using MoneyBee.Transfer.Domain.Entities;
 
 namespace MoneyBee.Transfer.Application.Features.Transfers.Handlers;
 
 public class CreateTransferHandler(
-    ITransferDbContext _context,
-    IFraudService _fraudService,
-    IExchangeRateService _exchangeRateService,
-    ICustomerService _customerService) : IRequestHandler<CreateTransferCommand, Guid>
+    ITransferDbContext context, 
+    IFraudService fraudService, 
+    IExchangeRateService exchangeRateService, 
+    ICustomerService customerService) : IRequestHandler<CreateTransferCommand, ServiceResponse<Guid>>
 {
-    public async Task<Guid> Handle(CreateTransferCommand request, CancellationToken cancellationToken)
+    public async Task<ServiceResponse<Guid>> Handle(CreateTransferCommand request, CancellationToken cancellationToken)
     {
-        var sender = await _customerService.GetCustomerAsync(request.SenderCustomerId);
-        var receiver = await _customerService.GetCustomerAsync(request.ReceiverCustomerId);
+        var customerResponse = await customerService.GetCustomerAsync(request.SenderCustomerId);
+        if (!customerResponse.IsSuccess)
+        {
+            throw new BusinessException("Gönderen müşteri bulunamadı.", 404);
+        }
 
-        if (sender == null || receiver == null)
-            throw new Exception("Gönderen veya alıcı müşteri bulunamadı.");
-
+        var sender = customerResponse.Data;
         if (sender.Status == CustomerStatus.Blocked)
-            throw new Exception("Engellenmiş müşteriler transfer yapamaz.");
+        {
+            throw new BusinessException("Engellenmiş müşteriler transfer yapamaz.", 403);
+        }
 
-        decimal amountInTry = await _exchangeRateService.ConvertToTryAsync(request.Amount, request.Currency);
-
-        var startOfDay = DateTime.UtcNow.Date;
-        var totalSentToday = await _context.Transfers
-            .Where(t => t.SenderCustomerId == request.SenderCustomerId && 
-                        t.CreatedDate >= startOfDay && 
-                        t.Status != TransactionStatus.FAILED)
-            .SumAsync(t => t.AmountInTry, cancellationToken);
-
-        if (totalSentToday + amountInTry > 10000)
-            throw new Exception("Günlük transfer limiti (10.000 TRY) aşıldı.");
-
-        var riskScore = await _fraudService.CheckRiskAsync(request.SenderCustomerId, amountInTry, "TRY");
+        decimal amountInTry = await exchangeRateService.ConvertToTryAsync(request.Amount, request.Currency);
         
-        if (riskScore == "HIGH")
-            throw new Exception("İşlem yüksek risk nedeniyle reddedildi.");
+        var dailyTotal = sender.CustomerLimit.LastTransactionDate.Date == DateTime.UtcNow.Date 
+            ? sender.CustomerLimit.DailyTotalAmount 
+            : 0m;
 
-        var status = TransactionStatus.COMPLETED;
-        if (amountInTry > 1000)
-            status = TransactionStatus.PENDING;
+        if (dailyTotal + amountInTry > 10000m)
+        {
+            throw new BusinessException("Günlük transfer limiti (10000 TL) aşıldı.");
+        }
+
+        var riskLevel = await fraudService.CheckRiskAsync(request.SenderCustomerId, amountInTry, request.Currency);
+        if (riskLevel == "HIGH")
+        {
+            throw new BusinessException("İşlem yüksek risk nedeniyle reddedildi.");
+        }
+
+        var status = (riskLevel == "MEDIUM" || amountInTry > 1000m) 
+            ? TransactionStatus.PENDING 
+            : TransactionStatus.COMPLETED;
 
         var transfer = new Domain.Entities.Transfer
         {
@@ -53,20 +59,18 @@ public class CreateTransferHandler(
             Currency = request.Currency,
             AmountInTry = amountInTry,
             Fee = CalculateFee(amountInTry),
-            TransactionCode = GenerateTransactionCode(), 
+            TransactionCode = $"MB{Guid.NewGuid():N}"[..10].ToUpper(),
             Status = status,
-            CreatedBy = "Branch_User_01"
+            CreatedBy = "Transfer_Service",
+            CreatedDate = DateTime.UtcNow
         };
 
-        _context.Transfers.Add(transfer);
-        await _context.SaveChangesAsync(cancellationToken);
+        context.Transfers.Add(transfer);
+        await customerService.UpdateCustomerLimitAsync(request.SenderCustomerId, amountInTry);
+        await context.SaveChangesAsync(cancellationToken);
 
-        return transfer.Id;
+        return ServiceResponse<Guid>.Success(transfer.Id, "İşlem başarıyla kaydedildi.", 201);
     }
 
-    private string GenerateTransactionCode() => 
-        "MB" + Guid.NewGuid().ToString("N").Substring(0, 8).ToUpper();
-
-    private decimal CalculateFee(decimal amountTry) => 
-        amountTry * 0.02m;
+    private static decimal CalculateFee(decimal amountTry) => Math.Round(amountTry * 0.02m, 2);
 }

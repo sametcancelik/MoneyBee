@@ -1,38 +1,48 @@
 using MediatR;
 using Microsoft.EntityFrameworkCore;
 using MoneyBee.Shared.Enums;
+using MoneyBee.Shared.Exceptions;
+using MoneyBee.Shared.Models;
+using MoneyBee.Transfer.Application.Features.Transfers.Commands;
 using MoneyBee.Transfer.Application.Interfaces;
 using MoneyBee.Transfer.Application.Interfaces.Persistance;
 
-namespace MoneyBee.Transfer.Application.Features.Transfers.Commands;
-public class ReceiveMoneyHandler(
-    ITransferDbContext _context,
-    ICustomerService _customerService) : IRequestHandler<ReceiveMoneyCommand, bool>
+namespace MoneyBee.Transfer.Application.Features.Transfers.Handlers;
+
+public class ReceiveMoneyHandler(ITransferDbContext context, ICustomerService customerService) : IRequestHandler<ReceiveMoneyCommand, ServiceResponse<bool>>
 {
-    public async Task<bool> Handle(ReceiveMoneyCommand request, CancellationToken cancellationToken)
+    public async Task<ServiceResponse<bool>> Handle(ReceiveMoneyCommand request, CancellationToken cancellationToken)
     {
-        var transfer = await _context.Transfers
+        var transfer = await context.Transfers
             .FirstOrDefaultAsync(x => x.TransactionCode == request.TransactionCode, cancellationToken);
 
         if (transfer == null)
-            throw new Exception("Geçersiz işlem kodu.");
+        {
+            throw new BusinessException("Geçersiz işlem kodu.", 404);
+        }
 
         if (transfer.Status == TransactionStatus.CANCELLED || transfer.Status == TransactionStatus.FAILED)
-            throw new Exception("Bu işlem ödeme için uygun değil.");
+        {
+            throw new BusinessException("Bu işlem ödeme için uygun değil.");
+        }
 
-        var customer = await _customerService.GetCustomerAsync(request.ReceiverCustomerId);
-        if (customer == null || customer.Status == CustomerStatus.Blocked)
-            throw new Exception("Alıcı kimliği doğrulanamadı veya müşteri engellenmiş.");
+        var customerResponse = await customerService.GetCustomerAsync(request.ReceiverCustomerId);
+        if (customerResponse?.Data == null || customerResponse.Data.Status == CustomerStatus.Blocked)
+        {
+            throw new BusinessException("Alıcı kimliği doğrulanamadı veya müşteri engellenmiş.");
+        }
 
         if (transfer.ReceiverCustomerId != request.ReceiverCustomerId)
-            throw new Exception("Bu işlem kodu bu alıcıya ait değil.");
+        {
+            throw new BusinessException("Bu işlem kodu bu alıcıya ait değil.");
+        }
 
         transfer.Status = TransactionStatus.COMPLETED;
         transfer.UpdatedDate = DateTime.UtcNow;
-        transfer.UpdatedBy = "Branch_User_01"; 
+        transfer.UpdatedBy = "Branch_User_01";
 
-        await _context.SaveChangesAsync(cancellationToken);
+        await context.SaveChangesAsync(cancellationToken);
 
-        return true;
+        return ServiceResponse<bool>.Success(true);
     }
 }
